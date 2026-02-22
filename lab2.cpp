@@ -4,28 +4,28 @@
 #include <stdlib.h>
 #include <time.h>
 #include <shellapi.h>
-#include <tchar.h>      // Для _T, TEXT, _tcscmp, _ttoi и т.д.
-#include <strsafe.h>    // Для StringCchCopy и безопасной работы со строками
+#include <tchar.h>
+#include <strsafe.h>
 
-// Default values
+// Переменные по умолчанию
 #define DEFAULT_N           4
 #define DEFAULT_WIDTH       320
 #define DEFAULT_HEIGHT      240
-#define DEFAULT_BG_COLOR    RGB(0, 0, 255)   // Blue
-#define DEFAULT_GRID_COLOR  RGB(255, 0, 0)   // Red
-#define CIRCLE_COLOR        RGB(0, 255, 0)   // Green
-#define CROSS_COLOR         RGB(255, 255, 0) // Yellow
+#define DEFAULT_BG_COLOR    RGB(0, 0, 255)
+#define DEFAULT_GRID_COLOR  RGB(255, 0, 0)
+#define CIRCLE_COLOR        RGB(0, 255, 0)
+#define CROSS_COLOR         RGB(255, 255, 0)
 
-// Config file
+// Константа для имени файла конфигурации
 const TCHAR* CONFIG_FILE = _T("config.txt");
 
-// Struct for cell states
+// Структуры 
 enum CellType { EMPTY, CIRCLE, CROSS };
 struct Cell {
     CellType type = EMPTY;
 };
 
-// Global variables
+// Глобальные переменные
 int N = DEFAULT_N;
 int winWidth = DEFAULT_WIDTH;
 int winHeight = DEFAULT_HEIGHT;
@@ -34,7 +34,7 @@ COLORREF gridColor = DEFAULT_GRID_COLOR;
 Cell* cells = nullptr;
 HBRUSH hBgBrush = nullptr;
 
-// Function prototypes
+// Прототипы функций
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void DrawGrid(HDC hdc, int width, int height);
 void DrawCells(HDC hdc, int width, int height);
@@ -43,26 +43,82 @@ void SaveConfig();
 void ChangeBgColor(HWND hwnd);
 void ChangeGridColor(int delta);
 
-// Parse command line for N (Unicode version)
+// Парсинг командной строки для получения параметра N
 void ParseCmdLine() {
     LPWSTR cmdLine = GetCommandLineW();
-    if (cmdLine) {
-        // Пропускаем имя программы
-        if (*cmdLine == L'"') {
-            cmdLine = wcschr(cmdLine + 1, L'"');
-            if (cmdLine) cmdLine++;
-        }
-        else {
-            cmdLine = wcschr(cmdLine, L' ');
-        }
-        if (cmdLine && *cmdLine == L' ') {
-            cmdLine++;
-            N = _wtoi(cmdLine);
-            if (N <= 0) N = DEFAULT_N;
-        }
-    }
-}
+    if (!cmdLine) return;
 
+	LPWSTR args = cmdLine;  //  Указатель на начало строки
+
+	// Пропускаем имя исполняемого файла
+    if (*args == L'"') {
+		// Имя в кавычках: ищем вторую кавычку
+        args = wcschr(args + 1, L'"');
+		if (args) args++;  // Если нашли, двигаем указатель за кавычку
+		else return;       // Если кавычек нет, считаем, что аргументов нет
+    }
+    else {
+		// Имя без кавычек: ищем первый пробел
+        args = wcschr(args, L' ');
+    }
+
+	// Если пробела нет, значит аргументов нет
+    if (!args) {
+        return;
+    }
+
+    // Пропускаем пробелы после имени
+    while (*args == L' ') args++;
+
+    // Если строка закончилась — параметров нет
+    if (*args == L'\0') {
+        return;
+    }
+
+	// Пытаемся преобразовать аргумент в число
+    wchar_t* end;
+    long val = wcstol(args, &end, 10);
+
+    if (end == args) {
+        MessageBoxW(NULL,
+            L"Ошибка: параметр не является целым числом.\n"
+            L"Ожидается одно целое число от 1 до 20 включительно.\nЗначение размера поля установленно значением по умолчанию равным 4.",
+            L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+        N = DEFAULT_N;
+        return;
+    }
+
+    while (*end == L' ') end++;
+    if (*end != L'\0') {
+        MessageBoxW(NULL,
+            L"Ошибка: обнаружены лишние символы после числа.\n"
+            L"Должен быть только один параметр (целое число от 1 до 20 включительно).\nЗначение размера поля установленно значением по умолчанию равным 4.",
+            L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+        N = DEFAULT_N;
+        return;
+    }
+
+    if (val < 1) {
+        MessageBoxW(NULL,
+            L"Размер поля не может быть меньше 1.\n"
+            L"Число должно быть целым от 1 до 20 включительно.\nЗначение размера поля установленно значением по умолчанию равным 4.",
+            L"Недопустимое значение", MB_ICONWARNING | MB_OK);
+        N = DEFAULT_N;
+        return;
+    }
+
+    if (val > 20) {
+        MessageBoxW(NULL,
+            L"Размер поля не может быть больше 20.\n"
+            L"Число должно быть целым от 1 до 20 включительно.\nЗначение размера поля установленно значением по умолчанию равным 4.",
+            L"Недопустимое значение", MB_ICONWARNING | MB_OK);
+        N = DEFAULT_N;
+        return;
+    }
+
+    N = (int)val;
+}
+// Главная функция
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
@@ -72,13 +128,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     // Загружаем конфиг
     LoadConfig();
 
-    // Аргумент командной строки имеет приоритет
+	// Парсим командную строку (параметр N)
     ParseCmdLine();
 
     // Выделяем память под клетки
     cells = new Cell[N * N];
 
-    // Регистрация класса окна
+	// Регистрация класса окна
     WNDCLASSEX wc = { 0 };
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -86,6 +142,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     wc.hInstance = hInstance;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.lpszClassName = TEXT("MyWindowClass");
+    wc.hbrBackground = hBgBrush;
 
     hBgBrush = CreateSolidBrush(bgColor);
     wc.hbrBackground = hBgBrush;
@@ -96,7 +153,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     HWND hwnd = CreateWindowEx(
         0,
         TEXT("MyWindowClass"),
-        TEXT("Лабораторная 2 — WinAPI"),
+        TEXT("Лабораторная 2"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         winWidth, winHeight,
@@ -139,9 +196,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_SIZE: {
-        winWidth = LOWORD(lParam);
-        winHeight = HIWORD(lParam);
-        InvalidateRect(hwnd, NULL, TRUE);
+        RECT rect;
+        GetWindowRect(hwnd, &rect);
+
+        winWidth = rect.right - rect.left;
+        winHeight = rect.bottom - rect.top;
         return 0;
     }
 
@@ -155,8 +214,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         int col = x / cellW;
         int row = y / cellH;
         if (col >= 0 && col < N && row >= 0 && row < N) {
-            cells[row * N + col].type = CIRCLE;
-            InvalidateRect(hwnd, NULL, FALSE);
+            Cell& cell = cells[row * N + col];
+
+            if (cell.type == EMPTY) {
+                cell.type = CIRCLE;
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
         }
         return 0;
     }
@@ -171,17 +234,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         int col = x / cellW;
         int row = y / cellH;
         if (col >= 0 && col < N && row >= 0 && row < N) {
-            cells[row * N + col].type = CROSS;
-            InvalidateRect(hwnd, NULL, FALSE);
+            Cell& cell = cells[row * N + col];
+
+            if (cell.type == EMPTY) {
+                cell.type = CROSS;
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
         }
         return 0;
     }
 
     case WM_KEYDOWN: {
         if (wParam == VK_ESCAPE) {
+            SaveConfig();
             PostQuitMessage(0);
         }
         else if (wParam == 'Q' && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) {
+            SaveConfig();
             PostQuitMessage(0);
         }
         else if (wParam == 'C' && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
@@ -210,6 +279,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
+// Функция для рисования сетки
 void DrawGrid(HDC hdc, int width, int height) {
     HPEN hPen = CreatePen(PS_SOLID, 1, gridColor);
     HGDIOBJ oldPen = SelectObject(hdc, hPen);
@@ -230,6 +300,7 @@ void DrawGrid(HDC hdc, int width, int height) {
     DeleteObject(hPen);
 }
 
+// Функция для рисования клеток
 void DrawCells(HDC hdc, int width, int height) {
     int cellW = width / N;
     int cellH = height / N;
@@ -269,65 +340,160 @@ void DrawCells(HDC hdc, int width, int height) {
     }
 }
 
+// Функция для загрузки конфигурации из файла
 void LoadConfig() {
-    if (GetFileAttributes(CONFIG_FILE) == INVALID_FILE_ATTRIBUTES) {
+    if (GetFileAttributes(CONFIG_FILE) == INVALID_FILE_ATTRIBUTES)
         return;
-    }
 
     HANDLE hFile = CreateFile(CONFIG_FILE, GENERIC_READ, FILE_SHARE_READ, NULL,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) return;
+    if (hFile == INVALID_HANDLE_VALUE)
+        return;
 
-    char buffer[512];
-    DWORD bytesRead;
-    ReadFile(hFile, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
-    buffer[bytesRead] = '\0';
+    wchar_t buffer[512];
+    DWORD bytesRead = 0;
+
+    if (!ReadFile(hFile, buffer, sizeof(buffer) - sizeof(wchar_t), &bytesRead, NULL)) {
+        CloseHandle(hFile);
+        MessageBoxW(NULL, L"Ошибка чтения config.txt", L"Ошибка", MB_ICONERROR);
+        return;
+    }
+
+    buffer[bytesRead / sizeof(wchar_t)] = L'\0';
     CloseHandle(hFile);
 
-    // Очень простой парсинг (можно улучшить)
-    char* line = strtok(buffer, "\n");
-    while (line) {
-        char* eq = strchr(line, '=');
-        if (eq) {
-            *eq = '\0';
-            char* key = line;
-            char* val = eq + 1;
+    if (buffer[0] == 0xFEFF) {
+        memmove(buffer, buffer + 1, (wcslen(buffer)) * sizeof(wchar_t));
+    }
 
-            if (_stricmp(key, "N") == 0)          N = atoi(val);
-            else if (_stricmp(key, "Width") == 0)  winWidth = atoi(val);
-            else if (_stricmp(key, "Height") == 0) winHeight = atoi(val);
-            else if (_stricmp(key, "BgColor") == 0)   bgColor = strtoul(val, NULL, 10);
-            else if (_stricmp(key, "GridColor") == 0) gridColor = strtoul(val, NULL, 10);
+    wchar_t* context = nullptr;
+    wchar_t* line = wcstok(buffer, L"\n", &context);
+
+    while (line) {
+        wchar_t* eq = wcschr(line, L'=');
+        if (!eq) {
+            MessageBoxW(NULL,
+                L"Ошибка формата строки в config.txt (отсутствует '=')",
+                L"Ошибка формата",
+                MB_ICONWARNING);
+            line = wcstok(nullptr, L"\n", &context);
+            continue;
         }
-        line = strtok(NULL, "\n");
+
+        *eq = L'\0';
+        wchar_t* key = line;
+        wchar_t* val = eq + 1;
+
+        if (_wcsicmp(key, L"N") == 0) {
+            wchar_t* end;
+            long temp = wcstol(val, &end, 10);
+
+            if (*end != L'\0' || temp < 1 || temp > 20) {
+                MessageBoxW(NULL,
+                    L"Значение N не входит в разрешенный диапазон значений, оно должно быть от 1 до 20.\nУстановлено значение по умолчанию равное 4.",
+                    L"Ошибка загрузки параметра N из файла config.txt",
+                    MB_ICONWARNING);
+                N = DEFAULT_N;
+            }
+            else {
+                N = (int)temp;
+            }
+        }
+        else if (_wcsicmp(key, L"Width") == 0) {
+            wchar_t* end;
+            long temp = wcstol(val, &end, 10);
+
+            if (*end != L'\0' || temp < 1 || temp > 10000) {
+                MessageBoxW(NULL,
+                    L"Значение Width не входит в разрешенный диапазон значений, оно должно быть от 1 до 10000.\nУстановлено значение по умолчанию равное 320.",
+                    L"Ошибка загрузки параметра Width из файла config.txt",
+                    MB_ICONWARNING);
+                winWidth = DEFAULT_WIDTH;
+            }
+            else {
+                winWidth = (int)temp;
+            }
+        }
+        else if (_wcsicmp(key, L"Height") == 0) {
+            wchar_t* end;
+            long temp = wcstol(val, &end, 10);
+
+            if (*end != L'\0' || temp < 1 || temp > 10000) {
+                MessageBoxW(NULL,
+                    L"Значение Height не входит в разрешенный диапазон значений, оно должно быть от 1 до 10000.\nУстановлено значение по умолчанию равное 240.",
+                    L"Ошибка загрузки параметра Height из файла config.txt",
+                    MB_ICONWARNING);
+                winHeight = DEFAULT_HEIGHT;
+            }
+            else {
+                winHeight = (int)temp;
+            }
+        }
+        else if (_wcsicmp(key, L"BgColor") == 0) {
+            wchar_t* end;
+            unsigned long temp = wcstoul(val, &end, 10);
+
+            if (*end != L'\0' || temp > 0xFFFFFF) {
+                MessageBoxW(NULL,
+                    L"Значение BgColor не входит в разрешенный диапазон значений, оно должно быть от 0 до 16777215.\nУстановлен цвет по умолчанию.",
+                    L"Ошибка загрузки параметра BgColor из файла config.txt",
+                    MB_ICONWARNING);
+                bgColor = DEFAULT_BG_COLOR;
+            }
+            else {
+                bgColor = (COLORREF)temp;
+            }
+        }
+        else if (_wcsicmp(key, L"GridColor") == 0) {
+            wchar_t* end;
+            unsigned long temp = wcstoul(val, &end, 10);
+
+            if (*end != L'\0' || temp > 0xFFFFFF) {
+                MessageBoxW(NULL,
+                    L"Значение GridColor не входит в разрешенный диапазон значений, оно должно быть от 0 до 16777215.\nУстановлен цвет по умолчанию.",
+                    L"Ошибка загрузки параметра GridColor из файла config.txt",
+                    MB_ICONWARNING);
+                gridColor = DEFAULT_GRID_COLOR;
+            }
+            else {
+                gridColor = (COLORREF)temp;
+            }
+        }
+
+        line = wcstok(nullptr, L"\n", &context);
     }
 }
 
+// Функция для сохранения конфигурации в файл
 void SaveConfig() {
-    HANDLE hFile = CreateFile(CONFIG_FILE, GENERIC_WRITE, 0, NULL,
+    HANDLE hFile = CreateFile(CONFIG_FILE,
+        GENERIC_WRITE, 0, NULL,
         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) return;
 
-    TCHAR buffer[512];
-    StringCchPrintf(buffer, ARRAYSIZE(buffer),
+    WORD bom = 0xFEFF;
+    DWORD written;
+    WriteFile(hFile, &bom, sizeof(bom), &written, NULL);
+
+    TCHAR buf[256];
+    StringCchPrintf(buf, ARRAYSIZE(buf),
         _T("N=%d\nWidth=%d\nHeight=%d\nBgColor=%lu\nGridColor=%lu\n"),
         N, winWidth, winHeight, bgColor, gridColor);
 
-    DWORD bytesWritten;
-    WriteFile(hFile, buffer, (DWORD)(_tcslen(buffer) * sizeof(TCHAR)), &bytesWritten, NULL);
+    WriteFile(hFile, buf, (DWORD)(_tcslen(buf) * sizeof(TCHAR)), &written, NULL);
     CloseHandle(hFile);
 }
 
+// Функция для изменения цвета фона
 void ChangeBgColor(HWND hwnd) {
     bgColor = RGB(rand() % 256, rand() % 256, rand() % 256);
-
     DeleteObject(hBgBrush);
     hBgBrush = CreateSolidBrush(bgColor);
-
     SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBgBrush);
     InvalidateRect(hwnd, NULL, TRUE);
 }
 
+// Функция для изменения цвета сетки в зависимости от прокрутки колеса мыши
 void ChangeGridColor(int delta) {
     int step = delta / 120;
     int r = GetRValue(gridColor) + step * 10;
