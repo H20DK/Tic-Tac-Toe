@@ -26,6 +26,8 @@ struct Cell {
 };
 
 // Глобальные переменные
+bool gameOver = false;
+CellType currentPlayer = CIRCLE;
 int N = DEFAULT_N;
 int winWidth = DEFAULT_WIDTH;
 int winHeight = DEFAULT_HEIGHT;
@@ -42,6 +44,7 @@ void LoadConfig();
 void SaveConfig();
 void ChangeBgColor(HWND hwnd);
 void ChangeGridColor(int delta);
+bool CheckWin(int lastRow, int lastCol);
 
 // Парсинг командной строки для получения параметра N
 void ParseCmdLine() {
@@ -205,26 +208,56 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_LBUTTONDOWN: {
+        if (gameOver)
+            return 0;
         int x = LOWORD(lParam);
         int y = HIWORD(lParam);
+
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
+
         int cellW = clientRect.right / N;
         int cellH = clientRect.bottom / N;
+
         int col = x / cellW;
         int row = y / cellH;
+
         if (col >= 0 && col < N && row >= 0 && row < N) {
+
             Cell& cell = cells[row * N + col];
 
             if (cell.type == EMPTY) {
-                cell.type = CIRCLE;
-                InvalidateRect(hwnd, NULL, FALSE);
+                if (currentPlayer == CIRCLE) {
+                    cell.type = CIRCLE;
+
+                    // Проверка победы
+                    if (CheckWin(row, col)) {
+                        gameOver = true;
+                        MessageBox(hwnd,
+                            currentPlayer == CIRCLE ? L"Победили нолики!" : L"Победили крестики!",
+                            L"Игра окончена",
+                            MB_OK | MB_ICONINFORMATION);
+                    }
+
+                    // Смена игрока
+                    currentPlayer = CROSS;
+
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
+            else {
+                MessageBox(hwnd,
+                    L"Эта клетка уже занята!",
+                    L"Ошибка хода",
+                    MB_OK | MB_ICONWARNING);
             }
         }
         return 0;
     }
 
     case WM_RBUTTONDOWN: {
+        if (gameOver)
+            return 0;
         int x = LOWORD(lParam);
         int y = HIWORD(lParam);
         RECT clientRect;
@@ -237,8 +270,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             Cell& cell = cells[row * N + col];
 
             if (cell.type == EMPTY) {
-                cell.type = CROSS;
-                InvalidateRect(hwnd, NULL, FALSE);
+                if (currentPlayer == CROSS) {
+                    cell.type = CROSS;
+
+                    // Проверка победы
+                    if (CheckWin(row, col)) {
+                        gameOver = true;
+                        MessageBox(hwnd,
+                            currentPlayer == CIRCLE ? L"Победили нолики!" : L"Победили крестики!",
+                            L"Игра окончена",
+                            MB_OK | MB_ICONINFORMATION);
+                    }
+
+                    // Смена игрока
+                    currentPlayer = CIRCLE;
+
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
+            else {
+                MessageBox(hwnd,
+                    L"Эта клетка уже занята!",
+                    L"Ошибка хода",
+                    MB_OK | MB_ICONWARNING);
             }
         }
         return 0;
@@ -273,6 +327,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_DESTROY: {
         SaveConfig();
         PostQuitMessage(0);
+        return 0;
+    }
+    case WM_MBUTTONDOWN: {
+
+        for (int i = 0; i < N * N; ++i)
+            cells[i].type = EMPTY;
+
+        currentPlayer = CIRCLE;
+        gameOver = false;
+        InvalidateRect(hwnd, NULL, TRUE);
+
         return 0;
     }
     }
@@ -505,4 +570,45 @@ void ChangeGridColor(int delta) {
     b = max(0, min(255, b));
 
     gridColor = RGB(r, g, b);
+}
+
+bool CheckWin(int lastRow, int lastCol) {
+
+    CellType player = cells[lastRow * N + lastCol].type;
+
+    bool win;
+
+    // Проверка строки
+    win = true;
+    for (int col = 0; col < N; ++col)
+        if (cells[lastRow * N + col].type != player)
+            win = false;
+    if (win) return true;
+
+    // Проверка столбца
+    win = true;
+    for (int row = 0; row < N; ++row)
+        if (cells[row * N + lastCol].type != player)
+            win = false;
+    if (win) return true;
+
+    // Главная диагональ
+    if (lastRow == lastCol) {
+        win = true;
+        for (int i = 0; i < N; ++i)
+            if (cells[i * N + i].type != player)
+                win = false;
+        if (win) return true;
+    }
+
+    // Побочная диагональ
+    if (lastRow + lastCol == N - 1) {
+        win = true;
+        for (int i = 0; i < N; ++i)
+            if (cells[i * N + (N - 1 - i)].type != player)
+                win = false;
+        if (win) return true;
+    }
+
+    return false;
 }
