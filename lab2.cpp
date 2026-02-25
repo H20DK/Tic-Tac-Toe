@@ -128,6 +128,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     // Загружаем конфиг
     LoadConfig();
 
+    hBgBrush = CreateSolidBrush(bgColor);
+
 	// Парсим командную строку (параметр N)
     ParseCmdLine();
 
@@ -147,7 +149,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     hBgBrush = CreateSolidBrush(bgColor);
     wc.hbrBackground = hBgBrush;
 
-    RegisterClassEx(&wc);
+    // Проверка результата регистрации окна
+    if (!RegisterClassEx(&wc)) {
+        MessageBox(NULL,
+            TEXT("Ошибка регистрации класса окна!"),
+            TEXT("Ошибка"),
+            MB_ICONERROR | MB_OK);
+        return 0;
+    }
 
     // Создание окна
     HWND hwnd = CreateWindowEx(
@@ -176,12 +185,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     // Очистка
     delete[] cells;
     DeleteObject(hBgBrush);
+    UnregisterClass(TEXT("MyWindowClass"), hInstance);
 
     return (int)msg.wParam;
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -245,13 +256,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_KEYDOWN: {
-        if (wParam == VK_ESCAPE) {
-            SaveConfig();
-            PostQuitMessage(0);
+        if (wParam == VK_ESCAPE) {            
+            DestroyWindow(hwnd);
         }
         else if (wParam == 'Q' && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) {
-            SaveConfig();
-            PostQuitMessage(0);
+            DestroyWindow(hwnd);
         }
         else if (wParam == 'C' && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
             ShellExecute(NULL, TEXT("open"), TEXT("notepad.exe"), NULL, NULL, SW_SHOW);
