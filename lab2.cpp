@@ -8,7 +8,7 @@
 #include <strsafe.h>
 
 // Переменные по умолчанию
-#define DEFAULT_N           4
+#define DEFAULT_N           3
 #define DEFAULT_WIDTH       320
 #define DEFAULT_HEIGHT      240
 #define DEFAULT_BG_COLOR    RGB(0, 0, 255)
@@ -26,6 +26,9 @@ struct Cell {
 };
 
 // Глобальные переменные
+bool vsComputer = true;
+CellType humanPlayer = CIRCLE;
+CellType computerPlayer = CROSS;
 bool gameOver = false;
 CellType currentPlayer = CIRCLE;
 int N = DEFAULT_N;
@@ -45,6 +48,9 @@ void SaveConfig();
 void ChangeBgColor(HWND hwnd);
 void ChangeGridColor(int delta);
 bool CheckWin(int lastRow, int lastCol);
+void ComputerMove(HWND hwnd);
+bool CanWin(CellType player, int& outRow, int& outCol);
+bool IsBoardFull();
 
 // Парсинг командной строки для получения параметра N
 void ParseCmdLine() {
@@ -227,29 +233,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             Cell& cell = cells[row * N + col];
 
             if (cell.type == EMPTY) {
-                if (currentPlayer == CIRCLE) {
-                    cell.type = CIRCLE;
 
-                    // Проверка победы
-                    if (CheckWin(row, col)) {
-                        gameOver = true;
-                        MessageBox(hwnd,
-                            currentPlayer == CIRCLE ? L"Победили нолики!" : L"Победили крестики!",
-                            L"Игра окончена",
-                            MB_OK | MB_ICONINFORMATION);
-                    }
+                cell.type = humanPlayer;
 
-                    // Смена игрока
-                    currentPlayer = CROSS;
-
-                    InvalidateRect(hwnd, NULL, FALSE);
+                if (CheckWin(row, col)) {
+                    MessageBox(hwnd, L"Вы победили!", L"Игра окончена", MB_OK);
+                    gameOver = true;
+                    return 0;
                 }
-            }
-            else {
-                MessageBox(hwnd,
-                    L"Эта клетка уже занята!",
-                    L"Ошибка хода",
-                    MB_OK | MB_ICONWARNING);
+
+                if (IsBoardFull()) {
+                    MessageBox(hwnd, L"Ничья!", L"Игра окончена", MB_OK);
+                    gameOver = true;
+                    return 0;
+                }
+
+                InvalidateRect(hwnd, NULL, FALSE);
+
+                if (vsComputer)
+                    ComputerMove(hwnd);
             }
         }
         return 0;
@@ -611,4 +613,90 @@ bool CheckWin(int lastRow, int lastCol) {
     }
 
     return false;
+}
+
+void ComputerMove(HWND hwnd) {
+
+    if (gameOver)
+        return;
+
+    int row = -1, col = -1;
+
+    // 1. Может ли компьютер выиграть?
+    if (CanWin(computerPlayer, row, col)) {
+        cells[row * N + col].type = computerPlayer;
+    }
+    // 2. Нужно ли блокировать игрока?
+    else if (CanWin(humanPlayer, row, col)) {
+        cells[row * N + col].type = computerPlayer;
+    }
+    // 3. Иначе случайный ход
+    else {
+        int freeCount = 0;
+
+        for (int i = 0; i < N * N; ++i)
+            if (cells[i].type == EMPTY)
+                freeCount++;
+
+        if (freeCount == 0)
+            return;
+
+        int choice = rand() % freeCount;
+
+        for (int i = 0; i < N * N; ++i) {
+            if (cells[i].type == EMPTY) {
+                if (choice == 0) {
+                    row = i / N;
+                    col = i % N;
+                    cells[i].type = computerPlayer;
+                    break;
+                }
+                choice--;
+            }
+        }
+    }
+
+    InvalidateRect(hwnd, NULL, FALSE);
+
+    if (CheckWin(row, col)) {
+        MessageBox(hwnd, L"Компьютер победил!", L"Игра окончена", MB_OK);
+        gameOver = true;
+        return;
+    }
+
+    if (IsBoardFull()) {
+        MessageBox(hwnd, L"Ничья!", L"Игра окончена", MB_OK);
+        gameOver = true;
+    }
+}
+
+bool CanWin(CellType player, int& outRow, int& outCol) {
+
+    for (int row = 0; row < N; ++row) {
+        for (int col = 0; col < N; ++col) {
+
+            if (cells[row * N + col].type == EMPTY) {
+
+                cells[row * N + col].type = player;
+
+                if (CheckWin(row, col)) {
+                    cells[row * N + col].type = EMPTY;
+                    outRow = row;
+                    outCol = col;
+                    return true;
+                }
+
+                cells[row * N + col].type = EMPTY;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool IsBoardFull() {
+    for (int i = 0; i < N * N; ++i)
+        if (cells[i].type == EMPTY)
+            return false;
+    return true;
 }
