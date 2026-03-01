@@ -48,21 +48,21 @@ void ParseCmdLine() {
     LPWSTR cmdLine = GetCommandLineW();
     if (!cmdLine) return;
 
-	LPWSTR args = cmdLine;  //  Указатель на начало строки
+    LPWSTR args = cmdLine;  //  Указатель на начало строки
 
-	// Пропускаем имя исполняемого файла
+    // Пропускаем имя исполняемого файла
     if (*args == L'"') {
-		// Имя в кавычках: ищем вторую кавычку
+        // Имя в кавычках: ищем вторую кавычку
         args = wcschr(args + 1, L'"');
-		if (args) args++;  // Если нашли, двигаем указатель за кавычку
-		else return;       // Если кавычек нет, считаем, что аргументов нет
+        if (args) args++;  // Если нашли, двигаем указатель за кавычку
+        else return;       // Если кавычек нет, считаем, что аргументов нет
     }
     else {
-		// Имя без кавычек: ищем первый пробел
+        // Имя без кавычек: ищем первый пробел
         args = wcschr(args, L' ');
     }
 
-	// Если пробела нет, значит аргументов нет
+    // Если пробела нет, значит аргументов нет
     if (!args) {
         return;
     }
@@ -75,7 +75,7 @@ void ParseCmdLine() {
         return;
     }
 
-	// Пытаемся преобразовать аргумент в число
+    // Пытаемся преобразовать аргумент в число
     wchar_t* end;
     long val = wcstol(args, &end, 10);
 
@@ -130,13 +130,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 
     hBgBrush = CreateSolidBrush(bgColor);
 
-	// Парсим командную строку (параметр N)
+    // Парсим командную строку (параметр N)
     ParseCmdLine();
 
     // Выделяем память под клетки
     cells = new Cell[N * N];
 
-	// Регистрация класса окна
+    // Регистрация класса окна
     WNDCLASSEX wc = { 0 };
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -169,6 +169,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         NULL, NULL, hInstance, NULL);
 
     if (!hwnd) {
+        UnregisterClass(TEXT("MyWindowClass"), hInstance);
         return 0;
     }
 
@@ -256,14 +257,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_KEYDOWN: {
-        if (wParam == VK_ESCAPE) {            
+        if (wParam == VK_ESCAPE) {
             DestroyWindow(hwnd);
         }
         else if (wParam == 'Q' && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) {
             DestroyWindow(hwnd);
         }
         else if (wParam == 'C' && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
-            ShellExecute(NULL, TEXT("open"), TEXT("notepad.exe"), NULL, NULL, SW_SHOW);
+            HINSTANCE result = ShellExecute(NULL, TEXT("open"), TEXT("notepad.exe"), NULL, NULL, SW_SHOW);
+
+            if ((INT_PTR)result <= 32) {
+                TCHAR szError[256];
+                if ((INT_PTR)result == SE_ERR_FNF) {
+                    _tcscpy_s(szError, TEXT("Файл notepad.exe не найден в системных путях."));
+                }
+                else if ((INT_PTR)result == SE_ERR_ACCESSDENIED) {
+                    _tcscpy_s(szError, TEXT("Доступ к запуску Блокнота заблокирован системой."));
+                }
+                else {
+                    _stprintf_s(szError, TEXT("Произошла ошибка ShellExecute. Код: %d"), (int)(INT_PTR)result);
+                }
+
+                MessageBox(hwnd, szError, TEXT("Ошибка запуска"), MB_ICONERROR | MB_OK);
+            }
+
         }
         else if (wParam == VK_RETURN) {
             ChangeBgColor(hwnd);
@@ -496,6 +513,9 @@ void SaveConfig() {
 // Функция для изменения цвета фона
 void ChangeBgColor(HWND hwnd) {
     bgColor = RGB(rand() % 256, rand() % 256, rand() % 256);
+    while (bgColor == CIRCLE_COLOR || bgColor == CROSS_COLOR || bgColor == gridColor) {
+        bgColor = RGB(rand() % 256, rand() % 256, rand() % 256);
+    }    
     DeleteObject(hBgBrush);
     hBgBrush = CreateSolidBrush(bgColor);
     SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBgBrush);
