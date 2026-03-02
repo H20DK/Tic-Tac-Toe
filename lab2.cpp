@@ -33,6 +33,7 @@ COLORREF bgColor = DEFAULT_BG_COLOR;
 COLORREF gridColor = DEFAULT_GRID_COLOR;
 Cell* cells = nullptr;
 HBRUSH hBgBrush = nullptr;
+int io_method = 4; // По умолчанию WinAPI
 
 // Прототипы функций
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -42,6 +43,16 @@ void LoadConfig();
 void SaveConfig();
 void ChangeBgColor(HWND hwnd);
 void ChangeGridColor(int delta);
+
+void LoadConfig_MMap();
+void LoadConfig_Stdio();
+void LoadConfig_FStream();
+void LoadConfig_WinAPI();
+
+void SaveConfig_MMap();
+void SaveConfig_Stdio();
+void SaveConfig_FStream();
+void SaveConfig_WinAPI();
 
 // Парсинг командной строки для получения параметра N
 void ParseCmdLine() {
