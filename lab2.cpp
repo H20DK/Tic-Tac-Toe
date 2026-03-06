@@ -41,6 +41,7 @@ COLORREF gridColor = DEFAULT_GRID_COLOR;
 Cell* cells = nullptr;
 HBRUSH hBgBrush = nullptr;
 int io_method = 4; // По умолчанию WinAPI
+int ioMethodSave = 4; // По умолчанию WinAPI
 bool n_from_cmdline = false; // Флаг, указывающий, был ли N задан через командную строку
 bool test_mode = false;
 
@@ -84,6 +85,7 @@ void ParseCmdLine() {
 
     bool has_n_parameter = false;
     bool has_io_parameter = false;
+    bool has_io_Save_parameter = false;
 
     for (int i = 1; i < argc; ++i) {
         wchar_t* arg = argv[i];
@@ -126,21 +128,21 @@ void ParseCmdLine() {
             n_from_cmdline = true;
             has_n_parameter = true;
         }
-        // Обработка параметра --io=
-        else if (wcsncmp(arg, L"--io=", 5) == 0) {
+        // Обработка параметра --ioRead=
+        else if (wcsncmp(arg, L"--ioRead=", 9) == 0) {
             if (has_io_parameter) {
                 MessageBoxW(NULL,
-                    L"Предупреждение: параметр --io указан несколько раз.\nБудет использовано последнее значение.",
+                    L"Предупреждение: параметр --ioRead указан несколько раз.\nБудет использовано последнее значение.",
                     L"Предупреждение", MB_ICONWARNING | MB_OK);
             }
 
-            wchar_t* mstr = arg + 5;
+            wchar_t* mstr = arg + 9;
 
             // Проверка, что после = есть значение
             if (*mstr == L'\0') {
                 MessageBoxW(NULL,
-                    L"Ошибка: не указано значение для --io.\n"
-                    L"Формат: --io=<номер метода (1-4)>",
+                    L"Ошибка: не указано значение для --ioRead.\n"
+                    L"Формат: --ioRead=<номер метода (1-4)>",
                     L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
                 continue;
             }
@@ -151,7 +153,7 @@ void ParseCmdLine() {
             // Проверка на корректное число
             if (end == mstr || *end != L'\0') {
                 MessageBoxW(NULL,
-                    L"Ошибка: значение --io должно быть целым числом.\n"
+                    L"Ошибка: значение --ioRead должно быть целым числом.\n"
                     L"Допустимые значения: 1, 2, 3, 4",
                     L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
                 continue;
@@ -170,6 +172,51 @@ void ParseCmdLine() {
 
             io_method = (int)m;
             has_io_parameter = true;
+        }
+        // Обработка параметра --io=
+        else if (wcsncmp(arg, L"--ioSave=", 9) == 0) {
+            if (has_io_Save_parameter) {
+                MessageBoxW(NULL,
+                    L"Предупреждение: параметр --ioSave указан несколько раз.\nБудет использовано последнее значение.",
+                    L"Предупреждение", MB_ICONWARNING | MB_OK);
+            }
+
+            wchar_t* mstr = arg + 9;
+
+            // Проверка, что после = есть значение
+            if (*mstr == L'\0') {
+                MessageBoxW(NULL,
+                    L"Ошибка: не указано значение для --ioSave.\n"
+                    L"Формат: --ioSave=<номер метода (1-4)>",
+                    L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+                continue;
+            }
+
+            wchar_t* end;
+            long m = wcstol(mstr, &end, 10);
+
+            // Проверка на корректное число
+            if (end == mstr || *end != L'\0') {
+                MessageBoxW(NULL,
+                    L"Ошибка: значение --ioSave должно быть целым числом.\n"
+                    L"Допустимые значения: 1, 2, 3, 4",
+                    L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+                continue;
+            }
+
+            // Проверка диапазона
+            if (m < 1 || m > 4) {
+                wchar_t msg[256];
+                StringCchPrintf(msg, ARRAYSIZE(msg),
+                    L"Значение %ld выходит за допустимый диапазон (1-4).\n"
+                    L"Будет использовано значение по умолчанию (%d).",
+                    m, io_method);
+                MessageBoxW(NULL, msg, L"Недопустимое значение", MB_ICONWARNING | MB_OK);
+                continue;
+            }
+
+            ioMethodSave = (int)m;
+            has_io_Save_parameter = true;
         }
         // Обработка флага --test
         else if (wcscmp(arg, L"--test") == 0) {
@@ -196,10 +243,11 @@ void ParseCmdLine() {
 // Функция для отображения справки
 void ShowHelp() {
     const wchar_t* helpText =
-        L"Использование: Lab2.exe [параметры]\n\n"
+        L"Использование: LAB.exe [параметры]\n\n"
         L"Параметры:\n"
         L"  <число>           Размер поля N (1-20)\n"
-        L"  --io=<номер>      Метод ввода-вывода (1-4)\n"
+        L"  --ioRead=<номер>      Метод ввода (1-4)\n"
+        L"  --ioSave=<номер>      Метод вывода (1-4)\n"
         L"                    1 - Memory Mapping\n"
         L"                    2 - Stdio (fopen/fread)\n"
         L"                    3 - FStream\n"
@@ -207,9 +255,9 @@ void ShowHelp() {
         L"  --test            Запустить тест производительности\n"
         L"  --help, -h, /?    Показать эту справку\n\n"
         L"Примеры:\n"
-        L"  LAB.exe 8 --io=2\n"
+        L"  LAB.exe 8 --ioRead=2 --ioSave=1\n"
         L"  LAB.exe --test\n"
-        L"  LAB.exe 5 --io=1 --test\n\n"
+        L"  LAB.exe 5 --ioRead=1 --test\n\n"
         L"Управление в программе:\n"
         L"  ЛКМ - поставить кружок\n"
         L"  ПКМ - поставить крестик\n"
@@ -495,7 +543,7 @@ void LoadConfig() {
 }
 // Выбор метода сохранения
 void SaveConfig() {
-    switch (io_method) {
+    switch (ioMethodSave) {
     case 1:
         SaveConfig_MMap();
         break;
@@ -669,18 +717,33 @@ void LoadConfig_FStream() {
 }
 
 void SaveConfig_FStream() {
-    std::basic_ofstream<TCHAR> ofs(CONFIG_FILE, std::ios::binary);
-    if (!ofs.is_open()) return;
+    std::ofstream ofs(CONFIG_FILE, std::ios::out | std::ios::trunc | std::ios::binary);
+    if (!ofs.is_open()) {
+        MessageBoxW(NULL, L"Не удалось создать/открыть config.txt (FStream)",
+            L"Ошибка сохранения", MB_ICONERROR);
+        return;
+    }
 
-    WORD bom = 0xFEFF;
-    ofs.write((TCHAR*)&bom, sizeof(bom) / sizeof(TCHAR));
+    const char bom[2] = { (char)0xFF, (char)0xFE };
+    ofs.write(bom, 2);
 
-    TCHAR buf[256];
-    StringCchPrintf(buf, ARRAYSIZE(buf),
-        _T("N=%d\nWidth=%d\nHeight=%d\nBgColor=%lu\nGridColor=%lu\n"),
+    // Формируем строку настроек
+    wchar_t buf[256];
+    swprintf_s(buf, ARRAYSIZE(buf),
+        L"N=%d\nWidth=%d\nHeight=%d\nBgColor=%lu\nGridColor=%lu\n",
         N, winWidth, winHeight, bgColor, gridColor);
 
-    ofs.write(buf, _tcslen(buf));
+    // Пишем ровно байты (2 байта на каждый wchar_t) — идентично другим методам
+    ofs.write((const char*)buf, wcslen(buf) * sizeof(wchar_t));
+
+    ofs.flush();
+
+    // Проверка на ошибки записи
+    if (!ofs.good()) {
+        MessageBoxW(NULL, L"Ошибка записи в config.txt через FStream",
+            L"Ошибка", MB_ICONERROR);
+    }
+
     ofs.close();
 }
 
@@ -714,13 +777,16 @@ void SaveConfig_WinAPI() {
         GENERIC_WRITE, 0, NULL,
         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) return;
+
     WORD bom = 0xFEFF;
     DWORD written;
     WriteFile(hFile, &bom, sizeof(bom), &written, NULL);
+
     TCHAR buf[256];
     StringCchPrintf(buf, ARRAYSIZE(buf),
         _T("N=%d\nWidth=%d\nHeight=%d\nBgColor=%lu\nGridColor=%lu\n"),
         N, winWidth, winHeight, bgColor, gridColor);
+
     WriteFile(hFile, buf, (DWORD)(_tcslen(buf) * sizeof(TCHAR)), &written, NULL);
     CloseHandle(hFile);
 }
@@ -1050,7 +1116,7 @@ void PerformTest() {
     }
 
     // Удаляем тестовый файл
-    DeleteFile(TEST_FILE);
+    //DeleteFile(TEST_FILE);
 
     printf("Тестирование завершено.");
 }
