@@ -23,7 +23,7 @@
 // Константа для имени файла конфигурации
 const TCHAR* CONFIG_FILE = _T("config.txt");
 
-const TCHAR* TEST_FILE = _T("test_1mb.bin");
+const TCHAR* TEST_FILE = _T("test.txt");
 const DWORD TEST_SIZE = 1024 * 1024;
 
 // Структуры 
@@ -40,9 +40,9 @@ COLORREF bgColor = DEFAULT_BG_COLOR;
 COLORREF gridColor = DEFAULT_GRID_COLOR;
 Cell* cells = nullptr;
 HBRUSH hBgBrush = nullptr;
-int io_method = 4; // По умолчанию WinAPI
+int ioMethodRead = 4; // По умолчанию WinAPI
 int ioMethodSave = 4; // По умолчанию WinAPI
-bool n_from_cmdline = false; // Флаг, указывающий, был ли N задан через командную строку
+bool nFromCmdline = false; // Флаг, указывающий, был ли N задан через командную строку
 bool test_mode = false;
 
 // Прототипы функций
@@ -74,7 +74,7 @@ bool CreateTestFile(const TCHAR* filename);
 void PerformTest();
 void ShowHelp();
 
-// Парсинг командной строки для получения параметра N
+// Парсинг командной строки для обработки параметров N, --ioRead, --ioSave и --test
 void ParseCmdLine() {
     int argc;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -83,9 +83,9 @@ void ParseCmdLine() {
         return;
     }
 
-    bool has_n_parameter = false;
-    bool has_io_parameter = false;
-    bool has_io_Save_parameter = false;
+    bool hasNParameter = false;
+    bool hasIoReadParameter = false;
+    bool hasIoSaveParameter = false;
 
     for (int i = 1; i < argc; ++i) {
         wchar_t* arg = argv[i];
@@ -95,7 +95,7 @@ void ParseCmdLine() {
 
         // Обработка параметра N (числовой аргумент)
         if (iswdigit(arg[0]) || (arg[0] == L'-' && iswdigit(arg[1]))) {
-            if (has_n_parameter) {
+            if (hasNParameter) {
                 MessageBoxW(NULL,
                     L"Предупреждение: параметр N указан несколько раз.\nБудет использовано последнее значение.",
                     L"Предупреждение", MB_ICONWARNING | MB_OK);
@@ -125,12 +125,12 @@ void ParseCmdLine() {
             }
 
             N = (int)val;
-            n_from_cmdline = true;
-            has_n_parameter = true;
+            nFromCmdline = true;
+            hasNParameter = true;
         }
         // Обработка параметра --ioRead=
         else if (wcsncmp(arg, L"--ioRead=", 9) == 0) {
-            if (has_io_parameter) {
+            if (hasIoReadParameter) {
                 MessageBoxW(NULL,
                     L"Предупреждение: параметр --ioRead указан несколько раз.\nБудет использовано последнее значение.",
                     L"Предупреждение", MB_ICONWARNING | MB_OK);
@@ -141,21 +141,21 @@ void ParseCmdLine() {
             // Проверка, что после = есть значение
             if (*mstr == L'\0') {
                 MessageBoxW(NULL,
-                    L"Ошибка: не указано значение для --ioRead.\n"
-                    L"Формат: --ioRead=<номер метода (1-4)>",
-                    L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+                    L"Ошибка: не указано значение для параметра --ioRead.\n"
+                    L"Формат: --ioRead=<номер метода чтения файла (1-4)>",
+                    L"Отсутствует значение аргумента параметра", MB_ICONWARNING | MB_OK);
                 continue;
             }
 
             wchar_t* end;
             long m = wcstol(mstr, &end, 10);
 
-            // Проверка на корректное число
+            // Проверка на целое число
             if (end == mstr || *end != L'\0') {
                 MessageBoxW(NULL,
-                    L"Ошибка: значение --ioRead должно быть целым числом.\n"
-                    L"Допустимые значения: 1, 2, 3, 4",
-                    L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+                    L"Ошибка: значение параметра --ioRead должно быть целым числом.\n"
+                    L"Допустимые значения: 1, 2, 3, 4\n",
+                    L"Значение параметра не целое число", MB_ICONWARNING | MB_OK);
                 continue;
             }
 
@@ -165,17 +165,17 @@ void ParseCmdLine() {
                 StringCchPrintf(msg, ARRAYSIZE(msg),
                     L"Значение %ld выходит за допустимый диапазон (1-4).\n"
                     L"Будет использовано значение по умолчанию (%d).",
-                    m, io_method);
-                MessageBoxW(NULL, msg, L"Недопустимое значение", MB_ICONWARNING | MB_OK);
+                    m, ioMethodRead);
+                MessageBoxW(NULL, msg, L"Значение аргумента выходит за допустимый диапазон (1-4)", MB_ICONWARNING | MB_OK);
                 continue;
             }
 
-            io_method = (int)m;
-            has_io_parameter = true;
+            ioMethodRead = (int)m;
+            hasIoReadParameter = true;
         }
-        // Обработка параметра --io=
+        // Обработка параметра --ioSave=
         else if (wcsncmp(arg, L"--ioSave=", 9) == 0) {
-            if (has_io_Save_parameter) {
+            if (hasIoSaveParameter) {
                 MessageBoxW(NULL,
                     L"Предупреждение: параметр --ioSave указан несколько раз.\nБудет использовано последнее значение.",
                     L"Предупреждение", MB_ICONWARNING | MB_OK);
@@ -186,9 +186,9 @@ void ParseCmdLine() {
             // Проверка, что после = есть значение
             if (*mstr == L'\0') {
                 MessageBoxW(NULL,
-                    L"Ошибка: не указано значение для --ioSave.\n"
-                    L"Формат: --ioSave=<номер метода (1-4)>",
-                    L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+                    L"Ошибка: не указано значение для аргумента параметра --ioSave.\n"
+                    L"Формат: --ioSave=<номер метода сохранения файла (1-4)>",
+                    L"Отсутствует значение аргумента параметра", MB_ICONWARNING | MB_OK);
                 continue;
             }
 
@@ -200,7 +200,7 @@ void ParseCmdLine() {
                 MessageBoxW(NULL,
                     L"Ошибка: значение --ioSave должно быть целым числом.\n"
                     L"Допустимые значения: 1, 2, 3, 4",
-                    L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
+                    L"Значение аргумента не целое число", MB_ICONWARNING | MB_OK);
                 continue;
             }
 
@@ -210,13 +210,13 @@ void ParseCmdLine() {
                 StringCchPrintf(msg, ARRAYSIZE(msg),
                     L"Значение %ld выходит за допустимый диапазон (1-4).\n"
                     L"Будет использовано значение по умолчанию (%d).",
-                    m, io_method);
-                MessageBoxW(NULL, msg, L"Недопустимое значение", MB_ICONWARNING | MB_OK);
+                    m, ioMethodRead);
+                MessageBoxW(NULL, msg, L"Значение аргумента выходит за допустимый диапазон (1-4)", MB_ICONWARNING | MB_OK);
                 continue;
             }
 
             ioMethodSave = (int)m;
-            has_io_Save_parameter = true;
+            hasIoSaveParameter = true;
         }
         // Обработка флага --test
         else if (wcscmp(arg, L"--test") == 0) {
@@ -246,14 +246,14 @@ void ShowHelp() {
         L"Использование: LAB.exe [параметры]\n\n"
         L"Параметры:\n"
         L"  <число>           Размер поля N (1-20)\n"
-        L"  --ioRead=<номер>      Метод ввода (1-4)\n"
-        L"  --ioSave=<номер>      Метод вывода (1-4)\n"
-        L"                    1 - Memory Mapping\n"
-        L"                    2 - Stdio (fopen/fread)\n"
-        L"                    3 - FStream\n"
-        L"                    4 - WinAPI (по умолчанию)\n"
+        L"  --ioRead=<номер>      Метод чтения файла (1-4)\n"
+        L"  --ioSave=<номер>      Метод записи файла (1-4)\n"
+        L"                    1 - При помощи отображения файлов на память\n"
+        L"                    2 - При помощи файловых переменных\n"
+        L"                    3 - При помощи потоков ввода-вывода \n"
+        L"                    4 - При помощи файловых функций WinAPI (по умолчанию)\n"
         L"  --test            Запустить тест производительности\n"
-        L"  --help, -h, /?    Показать эту справку\n\n"
+        L"  --help, -h, /?    Показать справку\n\n"
         L"Примеры:\n"
         L"  LAB.exe 8 --ioRead=2 --ioSave=1\n"
         L"  LAB.exe --test\n"
@@ -263,7 +263,7 @@ void ShowHelp() {
         L"  ПКМ - поставить крестик\n"
         L"  Enter - случайный цвет фона\n"
         L"  Колесо мыши - изменение цвета сетки\n"
-        L"  Ctrl+Q - выход\n"
+        L"  Ctrl+Q, Esc - выход\n"
         L"  Shift+C - открыть блокнот";
 
     MessageBoxW(NULL, helpText, L"Справка", MB_ICONINFORMATION | MB_OK);
@@ -523,7 +523,7 @@ void DrawCells(HDC hdc, int width, int height) {
 
 // Выбор метода загрузки
 void LoadConfig() {
-    switch (io_method) {
+    switch (ioMethodRead) {
     case 1:
         LoadConfig_MMap();
         break;
@@ -643,6 +643,7 @@ void SaveConfig_MMap() {
     pBuf[0] = 0xFEFF;
     memcpy(pBuf + 1, buf, len * sizeof(TCHAR));
 
+    FlushViewOfFile(pBuf, size);
     UnmapViewOfFile(pBuf);
     CloseHandle(hMapping);
     CloseHandle(hFile);
@@ -841,7 +842,7 @@ void CheckFileString(wchar_t* line, wchar_t* context) {
                     MB_ICONWARNING);
                 N = DEFAULT_N;
             }
-            else if (!n_from_cmdline) {
+            else if (!nFromCmdline) {
                 N = (int)temp;
             }
         }
@@ -905,7 +906,7 @@ void CheckFileString(wchar_t* line, wchar_t* context) {
     }
 }
 
-// Функция для чтения файла методом 1 (MMap)
+// Функция для чтения файла методом отображения на память
 bool ReadFile_MMap(const TCHAR* filename, void** buffer, DWORD* out_size) {
     *buffer = nullptr;
     *out_size = 0;
@@ -931,7 +932,6 @@ bool ReadFile_MMap(const TCHAR* filename, void** buffer, DWORD* out_size) {
         return false;
     }
 
-    // Копируем в новый буфер (чтобы unmap не повлиял)
     *buffer = malloc(fileSize);
     if (*buffer) {
         memcpy(*buffer, mapped, fileSize);
@@ -944,7 +944,7 @@ bool ReadFile_MMap(const TCHAR* filename, void** buffer, DWORD* out_size) {
     return *buffer != nullptr;
 }
 
-// Метод 2: Stdio
+// Функция для чтения файла методом файловых переменных 
 bool ReadFile_Stdio(const TCHAR* filename, void** buffer, DWORD* out_size) {
     *buffer = nullptr;
     *out_size = 0;
@@ -968,11 +968,11 @@ bool ReadFile_Stdio(const TCHAR* filename, void** buffer, DWORD* out_size) {
     return *buffer != nullptr;
 }
 
-// Метод 3: FStream
+// Функция для чтения файла методом потоков ввода-вывода
 bool ReadFile_FStream(const TCHAR* filename, void** buffer, DWORD* out_size) {
     *buffer = nullptr;
     *out_size = 0;
-    std::basic_ifstream<char> ifs(filename, std::ios::binary);
+    std::ifstream ifs(filename, std::ios::binary);
     if (!ifs.is_open()) return false;
 
     ifs.seekg(0, std::ios::end);
@@ -992,7 +992,7 @@ bool ReadFile_FStream(const TCHAR* filename, void** buffer, DWORD* out_size) {
     return *buffer != nullptr;
 }
 
-// Метод 4: WinAPI
+// Функция для чтения файла методом файловых функций WinAPI
 bool ReadFile_WinAPI(const TCHAR* filename, void** buffer, DWORD* out_size) {
     *buffer = nullptr;
     *out_size = 0;
@@ -1060,7 +1060,6 @@ void PerformTest() {
         SetConsoleCP(1251);
     }
     else {
-        // Крайне редкий случай — не удалось ни attach, ни alloc
         MessageBoxW(NULL, L"Не удалось создать/присоединиться к консоли", L"Ошибка теста", MB_ICONERROR);
         return;
     }
@@ -1074,9 +1073,9 @@ void PerformTest() {
 
     typedef bool (*ReadFunc)(const TCHAR*, void**, DWORD*);
     ReadFunc methods[4] = { ReadFile_MMap, ReadFile_Stdio, ReadFile_FStream, ReadFile_WinAPI };
-    const char* method_names[4] = { "Memory Mapping (1)", "Stdio (2)", "FStream (3)", "WinAPI (4)" };
+    const char* method_names[4] = { "1 отображения на память", "2 файловых переменных", "3 потоков ввода-вывода", "4 файловых функций WinAPI" };
 
-    printf("\nТестирование чтения файла 1 МБ (%u байт), %d итераций на метод\n\n", TEST_SIZE, ITERATIONS);
+    printf("\nТестирование чтения файла 1024 КБ, %d итераций на метод\n\n", ITERATIONS);
 
     for (int m = 0; m < 4; ++m) {
         double total_time_ms = 0.0;
@@ -1091,12 +1090,12 @@ void PerformTest() {
             bool success = methods[m](TEST_FILE, &buffer, &size);
 
             if (success) {
-                // Имитация использования данных (чтобы компилятор не выкинул чтение)
+                // Имитация использования данных
                 volatile BYTE checksum = 0;
                 for (DWORD j = 0; j < size; j += 4096) {
                     checksum += ((BYTE*)buffer)[j];
                 }
-                (void)checksum;  // убираем warning unused
+                (void)checksum;
 
                 free(buffer);
             }
@@ -1115,8 +1114,8 @@ void PerformTest() {
         printf("Метод %s, Итераций: %d, Среднее время: %.3f ms\n\n", method_names[m], ITERATIONS, avg_ms);
     }
 
-    // Удаляем тестовый файл
-    //DeleteFile(TEST_FILE);
+     //Удаляем тестовый файл
+    DeleteFile(TEST_FILE);
 
     printf("Тестирование завершено.");
 }
