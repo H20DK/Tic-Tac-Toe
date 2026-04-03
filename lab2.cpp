@@ -108,16 +108,16 @@ void ParseCmdLine() {
             if (end == arg || *end != L'\0') {
                 MessageBoxW(NULL,
                     L"Ошибка: параметр не является целым числом.\n"
-                    L"Ожидается целое число от 1 до 20 включительно.",
+                    L"Ожидается целое число от 1 до 10 включительно.",
                     L"Некорректный аргумент", MB_ICONWARNING | MB_OK);
                 continue;
             }
 
             // Проверка диапазона
-            if (val < 1 || val > 20) {
+            if (val < 1 || val > 10) {
                 wchar_t msg[256];
                 StringCchPrintf(msg, ARRAYSIZE(msg),
-                    L"Значение %ld выходит за допустимый диапазон (1-20).\n"
+                    L"Значение %ld выходит за допустимый диапазон (1-10).\n"
                     L"Будет использовано значение по умолчанию (%d).",
                     val, DEFAULT_N);
                 MessageBoxW(NULL, msg, L"Недопустимое значение", MB_ICONWARNING | MB_OK);
@@ -245,7 +245,7 @@ void ShowHelp() {
     const wchar_t* helpText =
         L"Использование: LAB.exe [параметры]\n\n"
         L"Параметры:\n"
-        L"  <число>           Размер поля N (1-20)\n"
+        L"  <число>           Размер поля N (1-10)\n"
         L"  --ioRead=<номер>      Метод чтения файла (1-4)\n"
         L"  --ioSave=<номер>      Метод записи файла (1-4)\n"
         L"                    1 - При помощи отображения файлов на память\n"
@@ -565,22 +565,42 @@ void SaveConfig() {
 // Метод 1: при помощи отображения файлов на память
 void LoadConfig_MMap() {
     HANDLE hFile = CreateFile(CONFIG_FILE, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) return;
+    if (hFile == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        wchar_t errorMsg[256];
+        swprintf_s(errorMsg, L"Ошибка открытия файла %s\nКод ошибки: %u", CONFIG_FILE, error);
+        MessageBox(NULL, errorMsg, L"Ошибка CreateFile", MB_OK | MB_ICONERROR);
+        return;
+    }
+
 
     DWORD fileSize = GetFileSize(hFile, NULL);
     if (fileSize == INVALID_FILE_SIZE) {
+        DWORD error = GetLastError();
+        wchar_t errorMsg[256];
+        swprintf_s(errorMsg, L"Ошибка получения размера файла\nКод ошибки: %u", error);
+        MessageBox(NULL, errorMsg, L"Ошибка GetFileSize", MB_OK | MB_ICONERROR);
         CloseHandle(hFile);
         return;
     }
 
+
     HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
     if (hMapping == NULL) {
+        DWORD error = GetLastError();
+        wchar_t errorMsg[256];
+        swprintf_s(errorMsg, L"Ошибка создания отображения файла\nКод ошибки: %u", error);
+        MessageBox(NULL, errorMsg, L"Ошибка CreateFileMapping", MB_OK | MB_ICONERROR);
         CloseHandle(hFile);
         return;
     }
 
     wchar_t* buffer = (wchar_t*)MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
     if (buffer == nullptr) {
+        DWORD error = GetLastError();
+        wchar_t errorMsg[256];
+        swprintf_s(errorMsg, L"Ошибка создания представления файла\nКод ошибки: %u", error);
+        MessageBox(NULL, errorMsg, L"Ошибка MapViewOfFile", MB_OK | MB_ICONERROR);
         CloseHandle(hMapping);
         CloseHandle(hFile);
         return;
@@ -652,10 +672,39 @@ void SaveConfig_MMap() {
 // Метод 2: при помощи файловых переменных
 void LoadConfig_Stdio() {
     FILE* fp = nullptr;
-    if (_tfopen_s(&fp, CONFIG_FILE, _T("rb")) != 0) return;
+    errno_t err = _tfopen_s(&fp, CONFIG_FILE, _T("rb"));
+    if (err != 0) {
+        wchar_t errorBuf[256];
+        _wcserror_s(errorBuf, 256, err);
+
+        wchar_t finalMsg[512];
+        swprintf_s(finalMsg, L"Не удалось открыть: %s\nПричина: %s", CONFIG_FILE, errorBuf);
+
+        MessageBoxW(NULL, finalMsg, L"Ошибка открытия файла", MB_OK | MB_ICONERROR);
+        return;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        MessageBox(NULL, L"Ошибка при перемещении в конец файла",
+            L"Ошибка fseek", MB_OK | MB_ICONERROR);
+        fclose(fp);
+        return;
+    }
+    long fileSize = ftell(fp);
+    if (fileSize == -1L) {
+        MessageBox(NULL, L"Ошибка получения размера файла",
+            L"Ошибка ftell", MB_OK | MB_ICONERROR);
+        fclose(fp);
+        return;
+    }
+    if (fileSize == 0) {
+        MessageBox(NULL, L"Файл конфигурации пуст",
+            L"Предупреждение", MB_OK | MB_ICONWARNING);
+        fclose(fp);
+        return;
+    }
 
     fseek(fp, 0, SEEK_END);
-    long fileSize = ftell(fp);
+    fileSize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
     wchar_t* buffer = new wchar_t[fileSize / sizeof(wchar_t) + 1];
@@ -677,8 +726,17 @@ void LoadConfig_Stdio() {
 
 void SaveConfig_Stdio() {
     FILE* fp = nullptr;
-    if (_tfopen_s(&fp, CONFIG_FILE, _T("wb")) != 0) return;
+    errno_t err = _tfopen_s(&fp, CONFIG_FILE, _T("r"));
+    if (err != 0) {
+        wchar_t errorBuf[256];
+        _wcserror_s(errorBuf, 256, err);
 
+        wchar_t finalMsg[512];
+        swprintf_s(finalMsg, L"Не удалось открыть: %s\nПричина: %s", CONFIG_FILE, errorBuf);
+
+        MessageBoxW(NULL, finalMsg, L"Ошибка открытия файла", MB_OK | MB_ICONERROR);
+        return;
+    }
     WORD bom = 0xFEFF;
     fwrite(&bom, sizeof(bom), 1, fp);
 
@@ -712,7 +770,7 @@ void LoadConfig_FStream() {
     delete[] buffer;
 
     wchar_t* context = nullptr;
-    wchar_t* line = wcstok(copy, L"\n", &context);    
+    wchar_t* line = wcstok(copy, L"\n", &context);
     CheckFileString(line, context);
     free(copy);
 }
@@ -797,7 +855,7 @@ void ChangeBgColor(HWND hwnd) {
     bgColor = RGB(rand() % 256, rand() % 256, rand() % 256);
     while (bgColor == CIRCLE_COLOR || bgColor == CROSS_COLOR || bgColor == gridColor) {
         bgColor = RGB(rand() % 256, rand() % 256, rand() % 256);
-    }    
+    }
     DeleteObject(hBgBrush);
     hBgBrush = CreateSolidBrush(bgColor);
     SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBgBrush);
@@ -835,9 +893,9 @@ void CheckFileString(wchar_t* line, wchar_t* context) {
         if (_wcsicmp(key, L"N") == 0) {
             wchar_t* end;
             long temp = wcstol(val, &end, 10);
-            if (*end != L'\0' || temp < 1 || temp > 20) {
+            if (*end != L'\0' || temp < 1 || temp > 10) {
                 MessageBoxW(NULL,
-                    L"Значение N не входит в разрешенный диапазон значений, оно должно быть от 1 до 20.\nУстановлено значение по умолчанию равное 4.",
+                    L"Значение N не входит в разрешенный диапазон значений, оно должно быть от 1 до 10.\nУстановлено значение по умолчанию равное 4.",
                     L"Ошибка загрузки параметра N из файла config.txt",
                     MB_ICONWARNING);
                 N = DEFAULT_N;
@@ -1114,7 +1172,7 @@ void PerformTest() {
         printf("Метод %s, Итераций: %d, Среднее время: %.3f ms\n\n", method_names[m], ITERATIONS, avg_ms);
     }
 
-     //Удаляем тестовый файл
+    //Удаляем тестовый файл
     DeleteFile(TEST_FILE);
 
     printf("Тестирование завершено.");
