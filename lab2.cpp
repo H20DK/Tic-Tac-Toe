@@ -1,5 +1,6 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS
 
+#include <vector>
 #include <windows.h>
 #include <stdlib.h>
 #include <time.h>
@@ -19,10 +20,12 @@
 #define DEFAULT_GRID_COLOR  RGB(255, 0, 0)
 #define CIRCLE_COLOR        RGB(0, 255, 0)
 #define CROSS_COLOR         RGB(255, 255, 0)
+#define MAX_N               10
+#define SHARED_MEM_NAME     _T("Lab4GameFieldShared")  //  имя shared memory
+#define UPDATE_MESSAGE_NAME _T("Lab4GameFieldUpdate")          // имя нашего сообщения
 
-// Константа для имени файла конфигурации
+// Константы
 const TCHAR* CONFIG_FILE = _T("config.txt");
-
 const TCHAR* TEST_FILE = _T("test.txt");
 const DWORD TEST_SIZE = 1024 * 1024;
 
@@ -32,18 +35,27 @@ struct Cell {
     CellType type = EMPTY;
 };
 
+struct SharedData {
+    LONG refCount;                    // счётчик запущенных экземпляров
+    Cell cells[MAX_N * MAX_N];        // общее игровое поле
+    COLORREF sharedBgColor;           // цвет фона (для подзадачи 1)
+    COLORREF sharedGridColor;         // цвет сетки (для подзадачи 1)
+};
+
 // Глобальные переменные
 int N = DEFAULT_N;
 int winWidth = DEFAULT_WIDTH;
 int winHeight = DEFAULT_HEIGHT;
 COLORREF bgColor = DEFAULT_BG_COLOR;
 COLORREF gridColor = DEFAULT_GRID_COLOR;
-Cell* cells = nullptr;
 HBRUSH hBgBrush = nullptr;
 int ioMethodRead = 4; // По умолчанию WinAPI
 int ioMethodSave = 4; // По умолчанию WinAPI
 bool nFromCmdline = false; // Флаг, указывающий, был ли N задан через командную строку
 bool test_mode = false;
+UINT g_updateMsg = 0;           // ID нашего зарегистрированного сообщения
+HANDLE g_hSharedMem = nullptr;  // handle shared memory
+SharedData* g_shared = nullptr; // указатель на данные в shared memory
 
 // Прототипы функций
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -73,6 +85,70 @@ bool ReadFile_WinAPI(const TCHAR* filename, void** buffer, DWORD* out_size);
 bool CreateTestFile(const TCHAR* filename);
 void PerformTest();
 void ShowHelp();
+void PositionWindowWithoutOverlap(HWND hwnd);
+
+// Подзадача 2 — размещение без перекрытия (исправлено: всегда начинает с левого верхнего)
+void PositionWindowWithoutOverlap(HWND hwnd) {
+    std::vector<RECT> occupied;
+
+    // Собираем все уже существующие окна нашего класса
+    EnumWindows([](HWND hWnd, LPARAM lParam) -> BOOL {
+        std::vector<RECT>* occ = reinterpret_cast<std::vector<RECT>*>(lParam);
+        TCHAR className[256] = { 0 };
+
+        if (GetClassName(hWnd, className, 256) &&
+            _tcscmp(className, TEXT("MyWindowClass")) == 0) {
+
+            RECT r;
+            if (GetWindowRect(hWnd, &r)) {
+                occ->push_back(r);
+            }
+        }
+        return TRUE;
+        }, reinterpret_cast<LPARAM>(&occupied));
+
+    // Если это ПЕРВЫЙ экземпляр — сразу ставим в левый верхний угол
+    if (occupied.empty()) {
+        SetWindowPos(hwnd, NULL, 40, 40, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        return;
+    }
+
+    RECT wr;
+    GetWindowRect(hwnd, &wr);
+    int w = wr.right - wr.left;
+    int h = wr.bottom - wr.top;
+
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+
+    const int STEP = 45;    // оптимальный отступ
+    const int MARGIN = 40;
+
+    // Ищем свободное место, начиная строго с левого верхнего угла
+    for (int y = MARGIN; y <= screenH - h - MARGIN; y += h + STEP) {
+        for (int x = MARGIN; x <= screenW - w - MARGIN; x += w + STEP) {
+            RECT proposed = { x, y, x + w, y + h };
+            bool overlap = false;
+
+            for (const auto& r : occupied) {
+                if (!(proposed.left >= r.right || proposed.right <= r.left ||
+                    proposed.top >= r.bottom || proposed.bottom <= r.top)) {
+                    overlap = true;
+                    break;
+                }
+            }
+
+            if (!overlap) {
+                SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+                return;
+            }
+        }
+    }
+
+    // Если экран почти заполнен — правый нижний угол
+    SetWindowPos(hwnd, NULL, screenW - w - MARGIN, screenH - h - MARGIN,
+        0, 0, SWP_NOSIZE | SWP_NOZORDER);
+}
 
 // Парсинг командной строки для обработки параметров N, --ioRead, --ioSave и --test
 void ParseCmdLine() {
@@ -277,9 +353,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     srand((unsigned int)time(NULL));
 
     // Загружаем конфиг
-    LoadConfig();
-
-    hBgBrush = CreateSolidBrush(bgColor);
+    LoadConfig();    
 
     // Парсим командную строку (параметр N)
     ParseCmdLine();
@@ -288,8 +362,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         PerformTest();
     }
 
-    // Выделяем память под клетки
-    cells = new Cell[N * N];
+    // === IPC: регистрируем сообщение для широковещательной рассылки ===
+    g_updateMsg = RegisterWindowMessage(UPDATE_MESSAGE_NAME);
+
+    // === IPC: создаём/открываем разделяемую память ===
+    size_t sharedSize = sizeof(SharedData);
+    g_hSharedMem = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
+        0, (DWORD)sharedSize, SHARED_MEM_NAME);
+
+    if (!g_hSharedMem) {
+        MessageBox(NULL, TEXT("Не удалось создать shared memory"), TEXT("Ошибка"), MB_ICONERROR);
+        return 0;
+    }
+
+    BOOL isFirstInstance = (GetLastError() != ERROR_ALREADY_EXISTS);
+    g_shared = (SharedData*)MapViewOfFile(g_hSharedMem, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+
+    if (!g_shared) {
+        CloseHandle(g_hSharedMem);
+        MessageBox(NULL, TEXT("Не удалось отобразить shared memory"), TEXT("Ошибка"), MB_ICONERROR);
+        return 0;
+    }
+
+    // Первый экземпляр инициализирует данные
+    if (isFirstInstance) {
+        g_shared->refCount = 1;
+        for (int i = 0; i < MAX_N * MAX_N; i++) g_shared->cells[i].type = EMPTY;
+        g_shared->sharedBgColor = bgColor;
+        g_shared->sharedGridColor = gridColor;
+    }
+    else {
+        InterlockedIncrement(&g_shared->refCount);  // увеличиваем счётчик
+    }
+
+    hBgBrush = CreateSolidBrush(bgColor);
 
     // Регистрация класса окна
     WNDCLASSEX wc = { 0 };
@@ -317,7 +423,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     HWND hwnd = CreateWindowEx(
         0,
         TEXT("MyWindowClass"),
-        TEXT("Лабораторная 2"),
+        TEXT("Лабораторная 4"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         winWidth, winHeight,
@@ -328,6 +434,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         return 0;
     }
 
+    PositionWindowWithoutOverlap(hwnd);
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
@@ -339,7 +446,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     }
 
     // Очистка
-    delete[] cells;
     DeleteObject(hBgBrush);
     UnregisterClass(TEXT("MyWindowClass"), hInstance);
 
@@ -347,6 +453,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+
+    // === Обработка широковещательного сообщения ===
+    if (message == g_updateMsg) {
+        // Синхронизация цвета (подзадача 1 задания 2)
+        if (bgColor != g_shared->sharedBgColor) {
+            bgColor = g_shared->sharedBgColor;
+            DeleteObject(hBgBrush);
+            hBgBrush = CreateSolidBrush(bgColor);
+            SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBgBrush);
+        }
+        if (gridColor != g_shared->sharedGridColor) {
+            gridColor = g_shared->sharedGridColor;
+        }
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+    }
+
     switch (message) {
 
     case WM_PAINT: {
@@ -381,10 +504,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         int col = x / cellW;
         int row = y / cellH;
         if (col >= 0 && col < N && row >= 0 && row < N) {
-            Cell& cell = cells[row * N + col];
+            Cell& cell = g_shared->cells[row * N + col];
 
             if (cell.type == EMPTY) {
                 cell.type = CIRCLE;
+                PostMessage(HWND_BROADCAST, g_updateMsg, 0, 0);
                 InvalidateRect(hwnd, NULL, FALSE);
             }
         }
@@ -401,10 +525,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         int col = x / cellW;
         int row = y / cellH;
         if (col >= 0 && col < N && row >= 0 && row < N) {
-            Cell& cell = cells[row * N + col];
+            Cell& cell = g_shared->cells[row * N + col];
 
             if (cell.type == EMPTY) {
                 cell.type = CROSS;
+                PostMessage(HWND_BROADCAST, g_updateMsg, 0, 0);
                 InvalidateRect(hwnd, NULL, FALSE);
             }
         }
@@ -452,6 +577,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_DESTROY: {
+        LONG remaining = InterlockedDecrement(&g_shared->refCount);
+
+        if (remaining == 0) {
+            memset(g_shared->cells, 0, sizeof(g_shared->cells));
+            g_shared->sharedBgColor = 0;
+            g_shared->sharedGridColor = 0;
+        }
+
+        UnmapViewOfFile(g_shared);
+        CloseHandle(g_hSharedMem);
+
         SaveConfig();
         PostQuitMessage(0);
         return 0;
@@ -471,8 +607,6 @@ void DrawGrid(HDC hdc, int width, int height) {
     for (int i = 1; i < N; ++i) {
         MoveToEx(hdc, i * cellW, 0, NULL);
         LineTo(hdc, i * cellW, height);
-    }
-    for (int i = 1; i < N; ++i) {
         MoveToEx(hdc, 0, i * cellH, NULL);
         LineTo(hdc, width, i * cellH);
     }
@@ -488,7 +622,7 @@ void DrawCells(HDC hdc, int width, int height) {
 
     for (int row = 0; row < N; ++row) {
         for (int col = 0; col < N; ++col) {
-            Cell cell = cells[row * N + col];
+            Cell cell = g_shared->cells[row * N + col];
             int x = col * cellW;
             int y = row * cellH;
 
@@ -856,10 +990,13 @@ void ChangeBgColor(HWND hwnd) {
     while (bgColor == CIRCLE_COLOR || bgColor == CROSS_COLOR || bgColor == gridColor) {
         bgColor = RGB(rand() % 256, rand() % 256, rand() % 256);
     }
+    g_shared->sharedBgColor = bgColor;
     DeleteObject(hBgBrush);
     hBgBrush = CreateSolidBrush(bgColor);
     SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBgBrush);
+    PostMessage(HWND_BROADCAST, g_updateMsg, 0, 0);
     InvalidateRect(hwnd, NULL, TRUE);
+    SaveConfig();
 }
 
 // Функция для изменения цвета сетки в зависимости от прокрутки колеса мыши
@@ -874,6 +1011,9 @@ void ChangeGridColor(int delta) {
     b = max(0, min(255, b));
 
     gridColor = RGB(r, g, b);
+    g_shared->sharedGridColor = gridColor;
+    PostMessage(HWND_BROADCAST, g_updateMsg, 0, 0);
+    SaveConfig();
 }
 // Проверка формата каждой строки и парсинг ключей и значений
 void CheckFileString(wchar_t* line, wchar_t* context) {
